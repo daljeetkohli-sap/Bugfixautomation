@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GitHub Code Review Agent</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f5f5f3;
+      color: #1a1a1a;
+      min-height: 100vh;
+      padding: 2rem 1rem;
+    }
+    .container { max-width: 720px; margin: 0 auto; }
+    h1 { font-size: 22px; font-weight: 600; margin-bottom: 4px; }
+    .subtitle { font-size: 14px; color: #666; margin-bottom: 1.5rem; }
+
+    .card {
+      background: #fff;
+      border: 1px solid #e0e0db;
+      border-radius: 12px;
+      padding: 1.25rem;
+      margin-bottom: 1rem;
+    }
+
+    .input-row { display: flex; gap: 8px; margin-bottom: 1rem; }
+    .input-row input {
+      flex: 1;
+      padding: 10px 14px;
+      font-size: 14px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      outline: none;
+      background: #fafaf8;
+    }
+    .input-row input:focus { border-color: #888; background: #fff; }
+    .input-row button {
+      padding: 10px 20px;
+      font-size: 14px;
+      font-weight: 500;
+      background: #1a1a1a;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .input-row button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .input-row button:hover:not(:disabled) { background: #333; }
+
+    .api-row { margin-bottom: 1rem; }
+    .api-row label { font-size: 13px; color: #555; display: block; margin-bottom: 4px; }
+    .api-row input {
+      width: 100%;
+      padding: 10px 14px;
+      font-size: 14px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      outline: none;
+      background: #fafaf8;
+      font-family: monospace;
+    }
+    .api-row input:focus { border-color: #888; background: #fff; }
+
+    .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 1.25rem; }
+    .chip {
+      display: flex; align-items: center; gap: 6px;
+      padding: 6px 14px;
+      border-radius: 20px;
+      border: 1px solid #ddd;
+      font-size: 13px;
+      cursor: pointer;
+      background: #fff;
+      color: #555;
+      transition: all 0.15s;
+      user-select: none;
+    }
+    .chip.active { background: #e8f0fe; border-color: #4a7cf7; color: #1a4fd6; }
+    .chip .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; opacity: 0.7; }
+
+    .status-bar {
+      display: none; align-items: center; gap: 10px;
+      padding: 12px 16px;
+      border-radius: 8px;
+      background: #f0f0ed;
+      border: 1px solid #e0e0db;
+      margin-bottom: 1rem;
+      font-size: 13px;
+      color: #555;
+    }
+    .status-bar.show { display: flex; }
+    .spinner {
+      width: 16px; height: 16px;
+      border: 2px solid #ccc;
+      border-top-color: #4a7cf7;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      flex-shrink: 0;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .error-msg {
+      display: none;
+      font-size: 13px;
+      color: #b91c1c;
+      background: #fef2f2;
+      border: 1px solid #fca5a5;
+      border-radius: 8px;
+      padding: 10px 14px;
+      margin-bottom: 1rem;
+    }
+    .error-msg.show { display: block; }
+
+    .results { display: none; flex-direction: column; gap: 1rem; }
+    .results.show { display: flex; }
+
+    .section-card {
+      background: #fff;
+      border: 1px solid #e0e0db;
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .section-header {
+      display: flex; align-items: center; gap: 10px;
+      padding: 14px 16px;
+      border-bottom: 1px solid #e0e0db;
+      background: #fafaf8;
+    }
+    .section-title { font-size: 14px; font-weight: 600; color: #1a1a1a; }
+    .badge {
+      margin-left: auto;
+      font-size: 11px;
+      padding: 3px 10px;
+      border-radius: 20px;
+      font-weight: 500;
+    }
+    .badge.danger { background: #fef2f2; color: #b91c1c; }
+    .badge.warning { background: #fffbeb; color: #92400e; }
+    .badge.success { background: #f0fdf4; color: #166534; }
+    .badge.info { background: #eff6ff; color: #1d4ed8; }
+
+    .section-body { padding: 14px 16px; }
+
+    .issue-item {
+      padding: 10px 0;
+      border-bottom: 1px solid #f0f0ed;
+      font-size: 13px;
+    }
+    .issue-item:last-child { border-bottom: none; padding-bottom: 0; }
+    .issue-file {
+      font-family: 'SFMono-Regular', Consolas, monospace;
+      font-size: 12px;
+      color: #1d4ed8;
+      margin-bottom: 4px;
+    }
+    .issue-text { color: #333; line-height: 1.6; }
+    .issue-fix {
+      margin-top: 8px;
+      font-size: 12px;
+      color: #166534;
+      background: #f0fdf4;
+      border-radius: 6px;
+      padding: 8px 12px;
+      font-family: 'SFMono-Regular', Consolas, monospace;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .prose { font-size: 13px; color: #333; line-height: 1.7; }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+    .metric {
+      background: #f5f5f3;
+      border-radius: 8px;
+      padding: 12px;
+    }
+    .metric-label { font-size: 12px; color: #666; margin-bottom: 4px; }
+    .metric-value { font-size: 22px; font-weight: 600; color: #1a1a1a; }
+
+    .ask-btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      margin-top: 14px;
+      font-size: 13px;
+      cursor: pointer;
+      padding: 8px 14px;
+      border-radius: 8px;
+      border: 1px solid #ddd;
+      background: #fff;
+      color: #333;
+    }
+    .ask-btn:hover { background: #f5f5f3; }
+
+    .note {
+      font-size: 12px;
+      color: #888;
+      margin-top: 0.5rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>GitHub code review agent</h1>
+    <p class="subtitle">Paste any public repo URL for an AI-powered audit — bugs, quality, security, and a daily summary.</p>
+
+    <div class="card">
+      <div class="api-row">
+        <label for="apiKey">Anthropic API key</label>
+        <input type="password" id="apiKey" placeholder="sk-ant-..." />
+        <p class="note">Your key is never stored — it stays in this page only.</p>
+      </div>
+
+      <div class="input-row">
+        <input type="text" id="repoUrl" placeholder="https://github.com/owner/repo" />
+        <button id="runBtn" onclick="runReview()">Analyse →</button>
+      </div>
+
+      <div class="chips">
+        <div class="chip active" id="chip-bugs" onclick="toggleChip('bugs')"><span class="dot"></span>Bug detection</div>
+        <div class="chip active" id="chip-quality" onclick="toggleChip('quality')"><span class="dot"></span>Code quality</div>
+        <div class="chip active" id="chip-report" onclick="toggleChip('report')"><span class="dot"></span>Daily report</div>
+        <div class="chip active" id="chip-security" onclick="toggleChip('security')"><span class="dot"></span>Security scan</div>
+      </div>
+    </div>
+
+    <div class="error-msg" id="errorMsg"></div>
+    <div class="status-bar" id="statusBar"><div class="spinner"></div><span id="statusText">Fetching repository...</span></div>
+
+    <div class="results" id="results">
+      <div class="section-card" id="card-bugs">
+        <div class="section-header">
+          <span class="section-title">🐛 Bugs &amp; issues</span>
+          <span class="badge danger" id="bugCount">—</span>
+        </div>
+        <div class="section-body" id="bugsBody"><p class="prose">No bugs found.</p></div>
+      </div>
+
+      <div class="section-card" id="card-quality">
+        <div class="section-header">
+          <span class="section-title">✦ Code quality</span>
+          <span class="badge warning" id="qualityScore">—</span>
+        </div>
+        <div class="section-body" id="qualityBody"><p class="prose">No issues found.</p></div>
+      </div>
+
+      <div class="section-card" id="card-security">
+        <div class="section-header">
+          <span class="section-title">🔒 Security scan</span>
+          <span class="badge info" id="securityScore">—</span>
+        </div>
+        <div class="section-body" id="securityBody"><p class="prose">No vulnerabilities found.</p></div>
+      </div>
+
+      <div class="section-card" id="card-report">
+        <div class="section-header">
+          <span class="section-title">📋 Daily report</span>
+          <span class="badge success">Summary</span>
+        </div>
+        <div class="section-body">
+          <div class="summary-grid" id="summaryGrid"></div>
+          <div class="prose" id="reportBody"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const activeChips = { bugs: true, quality: true, report: true, security: true };
+
+    function toggleChip(key) {
+      activeChips[key] = !activeChips[key];
+      document.getElementById('chip-' + key).classList.toggle('active', activeChips[key]);
+    }
+
+    function setStatus(msg) { document.getElementById('statusText').textContent = msg; }
+    function showError(msg) { const el = document.getElementById('errorMsg'); el.textContent = msg; el.classList.add('show'); }
+    function hideError() { document.getElementById('errorMsg').classList.remove('show'); }
+
+    async function fetchRepoInfo(owner, repo) {
+      const headers = { 'Accept': 'application/vnd.github.v3+json' };
+      const [repoRes, contentsRes, languagesRes] = await Promise.all([
+        fetch(`https://api.github.com/repos/${owner}/${repo}`, { headers }),
+        fetch(`https://api.github.com/repos/${owner}/${repo}/contents`, { headers }),
+        fetch(`https://api.github.com/repos/${owner}/${repo}/languages`, { headers }),
+      ]);
+      const repoData = await repoRes.json();
+      const contents = contentsRes.ok ? await contentsRes.json() : [];
+      const languages = languagesRes.ok ? await languagesRes.json() : {};
+      return { repoData, contents, languages };
+    }
+
+    async function fetchSomeFiles(owner, repo, contents) {
+      const codeExts = ['.js','.ts','.py','.java','.go','.rb','.php','.cs','.cpp','.c','.tsx','.jsx'];
+      const files = (Array.isArray(contents) ? contents : [])
+        .filter(f => f.type === 'file' && codeExts.some(e => f.name.endsWith(e)))
+        .slice(0, 5);
+      const results = [];
+      for (const f of files) {
+        try {
+          const r = await fetch(f.download_url);
+          if (r.ok) {
+            const text = await r.text();
+            results.push({ name: f.name, path: f.path, content: text.slice(0, 3000) });
+          }
+        } catch(e) {}
+      }
+      return results;
+    }
+
+    async function callClaude(prompt, apiKey) {
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true'
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 1500,
+          messages: [{ role: 'user', content: prompt }]
+        })
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message);
+      return data.content?.map(b => b.text || '').join('') || '';
+    }
+
+    function parseJSON(text) {
+      try { return JSON.parse(text.replace(/```json|```/g, '').trim()); }
+      catch(e) { return null; }
+    }
+
+    function renderBugs(bugs) {
+      document.getElementById('bugCount').textContent = bugs.length + ' found';
+      document.getElementById('bugsBody').innerHTML = bugs.length
+        ? bugs.map(b => `<div class="issue-item"><div class="issue-file">${b.file||'unknown'}</div><div class="issue-text">${b.description}</div>${b.fix?`<div class="issue-fix">${b.fix}</div>`:''}</div>`).join('')
+        : '<p class="prose">No bugs detected.</p>';
+    }
+
+    function renderQuality(issues) {
+      document.getElementById('qualityScore').textContent = issues.length + ' issues';
+      document.getElementById('qualityBody').innerHTML = issues.length
+        ? issues.map(q => `<div class="issue-item"><div class="issue-file">${q.file||'general'}</div><div class="issue-text">${q.description}</div></div>`).join('')
+        : '<p class="prose">Code quality looks good.</p>';
+    }
+
+    function renderSecurity(issues) {
+      document.getElementById('securityScore').textContent = issues.length + ' risks';
+      document.getElementById('securityBody').innerHTML = issues.length
+        ? issues.map(s => `<div class="issue-item"><div class="issue-file">${s.file||'general'}</div><div class="issue-text">${s.description}</div></div>`).join('')
+        : '<p class="prose">No obvious security issues found.</p>';
+    }
+
+    function renderReport(report, repoData) {
+      document.getElementById('summaryGrid').innerHTML = `
+        <div class="metric"><div class="metric-label">Stars</div><div class="metric-value">${repoData.stargazers_count ?? '—'}</div></div>
+        <div class="metric"><div class="metric-label">Forks</div><div class="metric-value">${repoData.forks_count ?? '—'}</div></div>
+        <div class="metric"><div class="metric-label">Language</div><div class="metric-value">${repoData.language || '—'}</div></div>
+        <div class="metric"><div class="metric-label">Open issues</div><div class="metric-value">${repoData.open_issues_count ?? '—'}</div></div>`;
+      document.getElementById('reportBody').innerHTML = `<p>${report}</p>`;
+    }
+
+    async function runReview() {
+      hideError();
+      const url = document.getElementById('repoUrl').value.trim();
+      const apiKey = document.getElementById('apiKey').value.trim();
+
+      if (!apiKey) { showError('Please enter your Anthropic API key.'); return; }
+      if (!url) { showError('Please enter a GitHub repo URL.'); return; }
+
+      const match = url.match(/github\.com\/([^\/]+)\/([^\/]+)/);
+      if (!match) { showError('Could not parse the GitHub URL. Use format: https://github.com/owner/repo'); return; }
+      const [, owner, repo] = match;
+      const cleanRepo = repo.replace(/\/$/, '');
+
+      document.getElementById('results').classList.remove('show');
+      document.getElementById('statusBar').classList.add('show');
+      document.getElementById('runBtn').disabled = true;
+
+      try {
+        setStatus('Fetching repository info...');
+        const { repoData, contents, languages } = await fetchRepoInfo(owner, cleanRepo);
+        if (repoData.message === 'Not Found') throw new Error('Repository not found or is private.');
+
+        setStatus('Reading source files...');
+        const files = await fetchSomeFiles(owner, cleanRepo, contents);
+
+        const filesSummary = files.map(f => `### ${f.path}\n${f.content}`).join('\n\n---\n\n');
+        const langList = Object.keys(languages).join(', ') || repoData.language || 'unknown';
+        const context = `Repository: ${repoData.full_name}\nDescription: ${repoData.description || 'none'}\nLanguages: ${langList}\nStars: ${repoData.stargazers_count}\n\nFile samples:\n${filesSummary || 'No code files found in root.'}`;
+
+        const sections = Object.keys(activeChips).filter(k => activeChips[k]);
+
+        setStatus('Running AI analysis...');
+        const prompt = `You are a senior code reviewer. Analyse this GitHub repository and return ONLY a valid JSON object (no markdown, no explanation) with these fields:
+${activeChips.bugs ? '"bugs": array of up to 5 objects with {file, description, fix}' : ''}
+${activeChips.quality ? '"quality": array of up to 5 objects with {file, description}' : ''}
+${activeChips.security ? '"security": array of up to 4 objects with {file, description}' : ''}
+${activeChips.report ? '"report": a 2-3 sentence daily summary of overall health, key risks, and recommended next action' : ''}
+
+Context:
+${context}
+
+Return ONLY the raw JSON object, nothing else.`;
+
+        const raw = await callClaude(prompt, apiKey);
+        const data = parseJSON(raw);
+        if (!data) throw new Error('AI returned an unexpected response. Please try again.');
+
+        document.getElementById('statusBar').classList.remove('show');
+        document.getElementById('results').classList.add('show');
+
+        document.getElementById('card-bugs').style.display = activeChips.bugs ? '' : 'none';
+        document.getElementById('card-quality').style.display = activeChips.quality ? '' : 'none';
+        document.getElementById('card-security').style.display = activeChips.security ? '' : 'none';
+        document.getElementById('card-report').style.display = activeChips.report ? '' : 'none';
+
+        if (activeChips.bugs) renderBugs(data.bugs || []);
+        if (activeChips.quality) renderQuality(data.quality || []);
+        if (activeChips.security) renderSecurity(data.security || []);
+        if (activeChips.report) renderReport(data.report || 'No summary generated.', repoData);
+
+      } catch(e) {
+        document.getElementById('statusBar').classList.remove('show');
+        showError(e.message || 'Something went wrong. Please try again.');
+      } finally {
+        document.getElementById('runBtn').disabled = false;
+      }
+    }
+  </script>
+</body>
+</html>
