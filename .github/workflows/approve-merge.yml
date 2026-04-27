@@ -1,0 +1,66 @@
+name: Agent approve + merge
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  approve_merge:
+    if: |
+      github.event.issue.pull_request &&
+      contains(github.event.comment.body, '/approve')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Merge if allowed + green
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const comment = context.payload.comment;
+            const issue = context.payload.issue;
+
+            // Gate: only allow trusted actors to approve
+            const allowed = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
+            if (!allowed.has(comment.author_association)) {
+              core.setFailed(`Not allowed: author_association=${comment.author_association}`);
+              return;
+            }
+
+            // Load PR
+            const prNumber = issue.number;
+            const pr = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
+
+            // Only auto-merge our daily branch
+            if (pr.data.head.ref !== 'agent/daily') {
+              core.setFailed(`Refusing: PR head is ${pr.data.head.ref} (expected agent/daily)`);
+              return;
+            }
+
+            // Check combined status on HEAD sha
+            const sha = pr.data.head.sha;
+            const combined = await github.rest.repos.getCombinedStatusForRef({ owner, repo, ref: sha });
+
+            const bad = combined.data.statuses.filter(s => s.state !== 'success');
+            if (combined.data.state !== 'success') {
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: prNumber,
+                body: `Cannot merge yet — checks not green.\n\nCombined state: **${combined.data.state}**\nFailing/pending: ${bad.map(s => `${s.context}=${s.state}`).join(', ') || 'unknown'}`
+              });
+              core.setFailed('Checks not green');
+              return;
+            }
+
+            // Merge (squash)
+            await github.rest.pulls.merge({
+              owner, repo, pull_number: prNumber,
+              merge_method: 'squash'
+            });
+
+            await github.rest.issues.createComment({
+              owner, repo, issue_number: prNumber,
+              body: `Merged ✅ (approved by @${comment.user.login})`
+            });
