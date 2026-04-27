@@ -1,0 +1,109 @@
+name: Daily agent proposal
+
+on:
+  schedule:
+    - cron: "15 21 * * *" # ~07:15 UTC+10
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: daily-agent-propose
+  cancel-in-progress: false
+
+jobs:
+  propose:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Generate daily report
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+
+            const { owner, repo } = context.repo;
+            const repoResp = await github.rest.repos.get({ owner, repo });
+
+            const now = new Date().toISOString();
+            const defaultBranch = repoResp.data.default_branch;
+
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
+              owner, repo, state: 'open', per_page: 100
+            });
+            const openIssues = issues.filter(i => !i.pull_request).length;
+            const openPRs = issues.filter(i => i.pull_request).length;
+
+            const report = [
+              `# Daily report (${now})`,
+              ``,
+              `- Repo: ${owner}/${repo}`,
+              `- Default branch: ${defaultBranch}`,
+              `- Stars: ${repoResp.data.stargazers_count}`,
+              `- Forks: ${repoResp.data.forks_count}`,
+              `- Open issues: ${openIssues}`,
+              `- Open PRs: ${openPRs}`,
+              ``,
+              `## Notes`,
+              `- If this repo contains a Node app later, this workflow will also run npm audit/tests and include safe fixes automatically.`,
+              ``
+            ].join('\n');
+
+            fs.writeFileSync('DAILY_REPORT.md', report, 'utf8');
+
+      - name: Node detection
+        id: node
+        run: |
+          if [ -f package.json ]; then
+            echo "has_node=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_node=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node (if needed)
+        if: steps.node.outputs.has_node == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install (if Node)
+        if: steps.node.outputs.has_node == 'true'
+        run: npm ci
+
+      - name: Security + non-breaking fixes (if Node)
+        if: steps.node.outputs.has_node == 'true'
+        run: |
+          npm audit --audit-level=high || true
+          npm audit fix || true
+
+      - name: Test (if script exists)
+        if: steps.node.outputs.has_node == 'true'
+        run: |
+          if npm run -s | grep -qE '^  test$'; then npm test; else echo "No test script"; fi
+
+      - name: Build (if script exists)
+        if: steps.node.outputs.has_node == 'true'
+        run: |
+          if npm run -s | grep -qE '^  build$'; then npm run build; else echo "No build script"; fi
+
+      - name: Create or update PR
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: agent/daily
+          title: "Daily agent proposal"
+          commit-message: "chore(agent): daily report and safe fixes"
+          body: |
+            ## Summary
+            - Daily report generated in `DAILY_REPORT.md`.
+            - If this repo is a Node app, includes non-breaking `npm audit fix` (no `--force`) plus test/build when available.
+
+            ## Approval
+            Comment **`/approve`** on this PR to auto-merge (checks must be green).
+          labels: |
+            automation
+            agent
