@@ -1,42 +1,63 @@
-name: Deploy GitHub Pages
+name: Daily agent proposal
 
 on:
-  push:
-    branches: ["main"]
+  schedule:
+    - cron: "15 21 * * *"
   workflow_dispatch: {}
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
+  pull-requests: write
 
 concurrency:
-  group: pages
-  cancel-in-progress: true
+  group: daily-agent-propose
+  cancel-in-progress: false
 
 jobs:
-  deploy:
+  propose:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Prepare site
-        run: |
-          mkdir -p dist
-          if [ -f index.html ]; then
-            cp index.html dist/index.html
-          elif [ -f index-Bugfixautomation.txt ]; then
-            cp index-Bugfixautomation.txt dist/index.html
-          else
-            echo "<h1>No index found</h1>" > dist/index.html
-          fi
-
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
+      - name: Generate daily report
+        uses: actions/github-script@v7
         with:
-          path: dist
-      - id: deployment
-        uses: actions/deploy-pages@v4
+          script: |
+            const fs = require('fs');
+            const { owner, repo } = context.repo;
+
+            const repoResp = await github.rest.repos.get({ owner, repo });
+            const now = new Date().toISOString();
+
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
+              owner, repo, state: 'open', per_page: 100
+            });
+
+            const openIssues = issues.filter(i => !i.pull_request).length;
+            const openPRs = issues.filter(i => i.pull_request).length;
+
+            const report = [
+              `# Daily report (${now})`,
+              ``,
+              `- Repo: ${owner}/${repo}`,
+              `- Default branch: ${repoResp.data.default_branch}`,
+              `- Stars: ${repoResp.data.stargazers_count}`,
+              `- Forks: ${repoResp.data.forks_count}`,
+              `- Open issues: ${openIssues}`,
+              `- Open PRs: ${openPRs}`,
+              ``
+            ].join('\n');
+
+            fs.writeFileSync('DAILY_REPORT.md', report, 'utf8');
+
+      - name: Create or update PR
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: agent/daily
+          title: "Daily agent proposal"
+          commit-message: "chore(agent): daily report"
+          body: |
+            Comment **`/approve`** on this PR to auto-merge (checks must be green).
+          labels: |
+            automation
+            agent
